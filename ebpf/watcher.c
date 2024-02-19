@@ -32,6 +32,7 @@ struct event_t {
     u64 argv;
     u64 envp;
     umode_t mode;
+    unsigned long inode;
 } __attribute__((packed));
 
 # define printk(fmt, ...)                        \
@@ -40,6 +41,31 @@ struct event_t {
             bpf_trace_printk(____fmt, sizeof(____fmt),    \
                      ##__VA_ARGS__);            \
         })
+
+__attribute__((section("kretprobe/sys_execve")))
+int kretprobe__sys_execve(struct pt_regs *ctx) {
+    struct task_struct *task = (struct task_struct *)bpf_get_current_task();
+
+    struct event_t event = {0};
+    event.pid = (u32) bpf_get_current_pid_tgid();
+    event.uid = (u32) bpf_get_current_uid_gid();
+
+	struct mm_struct *mm;
+    struct file *exe;
+    struct inode *inode;
+    unsigned long exe_inode = 1;
+    bpf_probe_read(&mm, sizeof(mm), (void*) &task->active_mm);
+    bpf_probe_read(&exe, sizeof(exe), (void*) &mm->exe_file);
+    bpf_probe_read(&inode, sizeof(inode), (void*) &exe->f_inode);
+    bpf_probe_read(&exe_inode, sizeof(exe_inode), (void*) &inode->i_ino);
+    event.inode = exe_inode;
+
+    u32 cpu = bpf_get_smp_processor_id();
+    bpf_perf_event_output(ctx, &events, cpu, &event, sizeof(event));
+    printk("execvexit pid=%d inode=%d\n", event.pid, exe_inode);
+
+    return 0;
+}
 
 __attribute__((section("kprobe/sys_execve")))
 int kprobe__sys_execve(struct pt_regs *ctx) {
@@ -71,8 +97,8 @@ int kprobe__sys_execve(struct pt_regs *ctx) {
     bpf_probe_read(&file, sizeof(file), (void*)&fdd[0]);
     bpf_probe_read(&f_inode, sizeof(f_inode), (void*)&file->f_inode);
     bpf_probe_read(&mode, sizeof(mode), (void*)&f_inode->i_mode);
+    event.mode = mode;
 
-	event.mode = mode;
     bpf_perf_event_output(ctx, &events, cpu, &event, sizeof(event));
 
     return 0;

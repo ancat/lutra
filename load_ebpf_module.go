@@ -11,7 +11,12 @@ func load_ebpf_module(path string) (chan []byte, chan uint64) {
         log.Fatalf("Failed to load ebpf binary: %s", err)
     }
 
-	if err := mod.EnableKprobe("kprobe/sys_execve", 1); err != nil {
+
+	if err := mod.EnableKprobe("kretprobe/sys_execve", 13); err != nil {
+		log.Fatalf("Failed to set up kretprobes: %s\nMake sure you are running as root and that debugfs is mounted!", err)
+	}
+
+	if err := mod.EnableKprobe("kprobe/sys_execve", 13); err != nil {
 		log.Fatalf("Failed to set up kprobes: %s\nMake sure you are running as root and that debugfs is mounted!", err)
 	}
 
